@@ -1,4 +1,6 @@
-// src/App.jsx
+// duty-scheduler-app
+// React + Tailwind + CSV download version with inline editable table for points
+
 import React, { useState } from 'react';
 import { format, parse } from 'date-fns';
 import Papa from 'papaparse';
@@ -6,76 +8,55 @@ import Papa from 'papaparse';
 const MAX_DUTY_POINTS = 7;
 
 const App = () => {
-  const [rawInput, setRawInput] = useState('');
   const [csvData, setCsvData] = useState([]);
   const [blockedText, setBlockedText] = useState('');
   const [blockedParsed, setBlockedParsed] = useState(null);
   const [confirmed, setConfirmed] = useState(false);
   const [monthYear, setMonthYear] = useState('2025-08');
 
-  const parsePointsText = () => {
-    const lines = rawInput.trim().split('\n');
-    const result = [];
-    lines.forEach(line => {
-      const [name, point] = line.split(',');
-      if (name && !isNaN(parseFloat(point))) {
-        result.push({
-          name: name.trim().toLowerCase(),
-          points: parseFloat(point),
-          assigned: 0,
-          schedule: []
-        });
-      }
-    });
-    setCsvData(result);
+  const handlePointChange = (index, key, value) => {
+    const updated = [...csvData];
+    updated[index][key] = key === 'points' ? parseFloat(value || 0) : value;
+    setCsvData(updated);
   };
 
   const parseBlockedDates = () => {
     const result = {};
-    const baseYear = +monthYear.split('-')[0];
-    const baseMonth = +monthYear.split('-')[1];
-
     const lines = blockedText.split(/\n|\r/).filter(Boolean);
     lines.forEach(line => {
-      const [nameRaw, datesRaw] = line.split(':');
-      if (!nameRaw || !datesRaw) return;
-      const name = nameRaw.trim().toLowerCase();
-      const blocked = new Set();
-
-      const ranges = datesRaw.split(',').map(d => d.trim());
-      ranges.forEach(entry => {
-        const cleaned = entry.replace(/[–—]/g, '-');
-        const rangeMatch = cleaned.match(/^(\d{1,2})-(\d{1,2})(?:\s+(\w+))?$/);
-        if (rangeMatch) {
-          const [_, start, end, monthText] = rangeMatch;
-          const month = monthText ? parse(`${monthText.slice(0, 3)} ${baseYear}`, 'MMM yyyy', new Date()).getMonth() + 1 : baseMonth;
-          for (let d = +start; d <= +end; d++) {
-            const date = new Date(baseYear, month - 1, d);
-            blocked.add(format(date, 'yyyy-MM-dd'));
+      const [name, dates] = line.split(':').map(part => part.trim());
+      if (!name || !dates) return;
+      const ranges = dates.split(',').map(d => d.trim());
+      const expanded = [];
+      const baseMonth = monthYear.split('-')[1] - 1;
+      const baseYear = +monthYear.split('-')[0];
+      ranges.forEach(r => {
+        const match = r.match(/(\d{1,2})\s*[-–—]\s*(\d{1,2})/);
+        if (match) {
+          const startDay = parseInt(match[1]);
+          const endDay = parseInt(match[2]);
+          for (let d = startDay; d <= endDay; d++) {
+            const date = new Date(baseYear, baseMonth, d);
+            expanded.push(format(date, 'yyyy-MM-dd'));
           }
-        } else {
-          const singleMatch = cleaned.match(/^(\d{1,2})(?:\s+(\w+))?$/);
-          if (singleMatch) {
-            const [_, day, monthText] = singleMatch;
-            const month = monthText ? parse(`${monthText.slice(0, 3)} ${baseYear}`, 'MMM yyyy', new Date()).getMonth() + 1 : baseMonth;
-            const date = new Date(baseYear, month - 1, +day);
-            blocked.add(format(date, 'yyyy-MM-dd'));
-          }
+        } else if (/\d{1,2}/.test(r)) {
+          const d = parseInt(r);
+          const date = new Date(baseYear, baseMonth, d);
+          expanded.push(format(date, 'yyyy-MM-dd'));
         }
       });
-
-      result[name] = Array.from(blocked).sort();
+      result[name.toLowerCase()] = expanded;
     });
-
     setBlockedParsed(result);
     setConfirmed(true);
   };
 
   const isBlocked = (name, date) => {
-    return blockedParsed?.[name.toLowerCase()]?.includes(date) || false;
+    const blocked = blockedParsed?.[name.toLowerCase()] || [];
+    return blocked.includes(date);
   };
 
-  const assignDuty = (dateStr, type, assignments) => {
+  const assignDuty = (dateStr, type, assignedMap) => {
     const eligible = csvData.filter(p => {
       if (p.assigned >= MAX_DUTY_POINTS && (type === 'AM' || type === 'PM')) return false;
       if (isBlocked(p.name, dateStr)) return false;
@@ -85,13 +66,13 @@ const App = () => {
     eligible.sort((a, b) => a.points + a.assigned - (b.points + b.assigned));
     const selected = eligible[0];
     if (!selected) return '';
-    if (type === 'AM' || type === 'PM') selected.assigned += 1;
+    selected.assigned += (type === 'AM' || type === 'PM') ? 1 : 0;
     selected.schedule.push(dateStr);
-    assignments[dateStr] = assignments[dateStr] || { AM: '', PM: '', AMR: [], PMR: [] };
-    if (type === 'AM') assignments[dateStr].AM = selected.name;
-    if (type === 'PM') assignments[dateStr].PM = selected.name;
-    if (type === 'AMR') assignments[dateStr].AMR.push(selected.name);
-    if (type === 'PMR') assignments[dateStr].PMR.push(selected.name);
+    assignedMap[dateStr] = assignedMap[dateStr] || { AM: '', PM: '', AMR: [], PMR: [] };
+    if (type === 'AM') assignedMap[dateStr].AM = selected.name;
+    if (type === 'PM') assignedMap[dateStr].PM = selected.name;
+    if (type === 'AMR') assignedMap[dateStr].AMR.push(selected.name);
+    if (type === 'PMR') assignedMap[dateStr].PMR.push(selected.name);
     return selected.name;
   };
 
@@ -99,9 +80,8 @@ const App = () => {
     const [year, month] = monthYear.split('-');
     const daysInMonth = new Date(year, month, 0).getDate();
     const assignments = {};
-
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dateObj = new Date(year, month - 1, d);
+    for (let i = 1; i <= daysInMonth; i++) {
+      const dateObj = new Date(year, month - 1, i);
       const dateStr = format(dateObj, 'yyyy-MM-dd');
       assignDuty(dateStr, 'AM', assignments);
       assignDuty(dateStr, 'PM', assignments);
@@ -112,19 +92,19 @@ const App = () => {
     }
 
     const rows = [];
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dateObj = new Date(year, month - 1, d);
+    for (let i = 1; i <= daysInMonth; i++) {
+      const dateObj = new Date(year, month - 1, i);
       const dateStr = format(dateObj, 'yyyy-MM-dd');
-      const dayRow = assignments[dateStr] || { AM: '', PM: '', AMR: [], PMR: [] };
+      const a = assignments[dateStr] || { AM: '', PM: '', AMR: [], PMR: [] };
       rows.push({
         Date: format(dateObj, 'd/M/yyyy'),
         Day: format(dateObj, 'EEE'),
-        AM: dayRow.AM,
-        PM: dayRow.PM,
-        'AM Reserve 1': dayRow.AMR[0] || '',
-        'AM Reserve 2': dayRow.AMR[1] || '',
-        'PM Reserve 1': dayRow.PMR[0] || '',
-        'PM Reserve 2': dayRow.PMR[1] || ''
+        AM: a.AM,
+        PM: a.PM,
+        'AM Reserve 1': a.AMR[0] || '',
+        'AM Reserve 2': a.AMR[1] || '',
+        'PM Reserve 1': a.PMR[0] || '',
+        'PM Reserve 2': a.PMR[1] || ''
       });
     }
 
@@ -140,28 +120,38 @@ const App = () => {
   };
 
   return (
-    <div style={{ padding: '2em', maxWidth: '700px', margin: 'auto', fontFamily: 'Arial, sans-serif' }}>
-      <h1 style={{ fontSize: '1.8em', fontWeight: 'bold', marginBottom: '1em' }}>Duty Scheduler</h1>
+    <div style={{ padding: '2em', maxWidth: '800px', margin: 'auto', fontFamily: 'Arial, sans-serif' }}>
+      <h1 style={{ fontSize: '1.5em', fontWeight: 'bold', marginBottom: '1em' }}>Duty Scheduler</h1>
 
-      <label><strong>Paste Current Points (Name,Points):</strong></label>
-      <textarea
-        rows={10}
-        value={rawInput}
-        onChange={(e) => setRawInput(e.target.value)}
-        style={{ width: '100%', padding: '10px', marginBottom: '1em', fontFamily: 'monospace' }}
-        placeholder={`asher,1\nBenjamin,7.5\n...`}
-      />
-      <button onClick={parsePointsText} style={{ marginBottom: '1.5em', padding: '10px', backgroundColor: '#444', color: 'white' }}>
-        Parse Points
-      </button>
+      <h2><strong>Enter Clerk Names and Current Points:</strong></h2>
+      <table style={{ width: '100%', marginBottom: '1em', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ border: '1px solid #ccc', padding: '8px' }}>Name</th>
+            <th style={{ border: '1px solid #ccc', padding: '8px' }}>Points</th>
+          </tr>
+        </thead>
+        <tbody>
+          {csvData.map((row, idx) => (
+            <tr key={idx}>
+              <td><input value={row.name} onChange={e => handlePointChange(idx, 'name', e.target.value)} style={{ width: '100%' }} /></td>
+              <td><input value={row.points} type="number" onChange={e => handlePointChange(idx, 'points', e.target.value)} style={{ width: '100%' }} /></td>
+            </tr>
+          ))}
+          <tr>
+            <td><input placeholder="Name" onChange={e => handlePointChange(csvData.length, 'name', e.target.value)} /></td>
+            <td><input placeholder="Points" type="number" onChange={e => handlePointChange(csvData.length, 'points', e.target.value)} /></td>
+          </tr>
+        </tbody>
+      </table>
 
       <label><strong>Blocked-Out Dates (Optional):</strong></label>
       <textarea
-        rows={5}
+        rows={6}
         value={blockedText}
         onChange={(e) => setBlockedText(e.target.value)}
-        style={{ width: '100%', padding: '10px', marginBottom: '1em' }}
-        placeholder={`dong han: 3, 6, 20–22 Aug\nharshith: 4–9\ndervin: 2–10`}
+        style={{ width: '100%', padding: '8px', marginBottom: '1em' }}
+        placeholder={`Example:\nEmmanuel: 10–14\nDaniel: 17, 22–24`}
       />
 
       <label><strong>Target Month:</strong></label>
@@ -180,7 +170,7 @@ const App = () => {
 
       {confirmed && (
         <div style={{ marginTop: '2em' }}>
-          <h2><strong>Parsed Blocked Dates:</strong></h2>
+          <h2><strong>Parsed Blocked-Out Dates:</strong></h2>
           <ul>
             {Object.entries(blockedParsed || {}).map(([name, dates]) => (
               <li key={name}><strong>{name}</strong>: {dates.map(d => format(new Date(d), 'd MMM')).join(', ')}</li>
@@ -188,10 +178,10 @@ const App = () => {
           </ul>
           <br />
           <button onClick={generateSchedule} style={{ padding: '10px', backgroundColor: 'green', color: 'white', border: 'none', marginRight: '1em' }}>
-            Generate Schedule
+            Yes, Generate Schedule
           </button>
           <button onClick={() => setConfirmed(false)} style={{ padding: '10px', border: '1px solid #ccc' }}>
-            Edit Again
+            Go Back to Edit
           </button>
         </div>
       )}
