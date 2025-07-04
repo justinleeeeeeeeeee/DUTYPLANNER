@@ -1,5 +1,4 @@
-// App.jsx – Copy-paste version (no file upload)
-
+// src/App.jsx
 import React, { useState } from 'react';
 import { format, parse } from 'date-fns';
 import Papa from 'papaparse';
@@ -7,70 +6,76 @@ import Papa from 'papaparse';
 const MAX_DUTY_POINTS = 7;
 
 const App = () => {
-  const [rawPoints, setRawPoints] = useState('');
-  const [csvData, setCsvData] = useState(null);
+  const [rawInput, setRawInput] = useState('');
+  const [csvData, setCsvData] = useState([]);
   const [blockedText, setBlockedText] = useState('');
   const [blockedParsed, setBlockedParsed] = useState(null);
   const [confirmed, setConfirmed] = useState(false);
   const [monthYear, setMonthYear] = useState('2025-08');
 
-  const parsePoints = () => {
-    const lines = rawPoints.trim().split('\n').filter(Boolean);
-    const parsed = lines.slice(1).map(line => {
-      const [name, points] = line.split(',').map(s => s.trim());
-      return {
-        name,
-        points: parseFloat(points),
-        assigned: 0,
-        schedule: []
-      };
+  const parsePointsText = () => {
+    const lines = rawInput.trim().split('\n');
+    const result = [];
+    lines.forEach(line => {
+      const [name, point] = line.split(',');
+      if (name && !isNaN(parseFloat(point))) {
+        result.push({
+          name: name.trim().toLowerCase(),
+          points: parseFloat(point),
+          assigned: 0,
+          schedule: []
+        });
+      }
     });
-    setCsvData(parsed);
+    setCsvData(result);
   };
 
   const parseBlockedDates = () => {
     const result = {};
+    const baseYear = +monthYear.split('-')[0];
+    const baseMonth = +monthYear.split('-')[1];
+
     const lines = blockedText.split(/\n|\r/).filter(Boolean);
     lines.forEach(line => {
-      const match = line.match(/^([\w\s]+)[^\d]*(\d{1,2}(?:\/\d{1,2}\/\d{2,4}|[–-]\d{1,2})?(?:[,–\-\s\d\/]*)?)/i);
-      if (!match) return;
-      const name = match[1].trim().toLowerCase();
-      const datePart = match[2];
-      const baseMonth = parseInt(monthYear.split('-')[1], 10) - 1;
-      const baseYear = +monthYear.split('-')[0];
-      const expanded = [];
+      const [nameRaw, datesRaw] = line.split(':');
+      if (!nameRaw || !datesRaw) return;
+      const name = nameRaw.trim().toLowerCase();
+      const blocked = new Set();
 
-      const parts = datePart.split(/,|\s+/).map(s => s.trim()).filter(Boolean);
-      parts.forEach((part, idx) => {
-        if (part.includes('-') || part.includes('–')) {
-          const [s, e] = part.split(/–|-/).map(x => x.trim());
-          const start = parse(`${s} ${baseYear}`, 'd MMM yyyy', new Date(baseYear, baseMonth));
-          const end = parse(`${e} ${baseYear}`, 'd MMM yyyy', new Date(baseYear, baseMonth));
-          let d = new Date(start);
-          while (d <= end) {
-            expanded.push(format(d, 'yyyy-MM-dd'));
-            d.setDate(d.getDate() + 1);
+      const ranges = datesRaw.split(',').map(d => d.trim());
+      ranges.forEach(entry => {
+        const cleaned = entry.replace(/[–—]/g, '-');
+        const rangeMatch = cleaned.match(/^(\d{1,2})-(\d{1,2})(?:\s+(\w+))?$/);
+        if (rangeMatch) {
+          const [_, start, end, monthText] = rangeMatch;
+          const month = monthText ? parse(`${monthText.slice(0, 3)} ${baseYear}`, 'MMM yyyy', new Date()).getMonth() + 1 : baseMonth;
+          for (let d = +start; d <= +end; d++) {
+            const date = new Date(baseYear, month - 1, d);
+            blocked.add(format(date, 'yyyy-MM-dd'));
           }
-        } else if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(part)) {
-          const parsedDate = parse(part, 'd/M/yy', new Date());
-          expanded.push(format(parsedDate, 'yyyy-MM-dd'));
-        } else if (/\d{1,2}/.test(part)) {
-          const parsedDate = new Date(baseYear, baseMonth, +part);
-          expanded.push(format(parsedDate, 'yyyy-MM-dd'));
+        } else {
+          const singleMatch = cleaned.match(/^(\d{1,2})(?:\s+(\w+))?$/);
+          if (singleMatch) {
+            const [_, day, monthText] = singleMatch;
+            const month = monthText ? parse(`${monthText.slice(0, 3)} ${baseYear}`, 'MMM yyyy', new Date()).getMonth() + 1 : baseMonth;
+            const date = new Date(baseYear, month - 1, +day);
+            blocked.add(format(date, 'yyyy-MM-dd'));
+          }
         }
       });
-      result[name] = (result[name] || []).concat(expanded);
+
+      result[name] = Array.from(blocked).sort();
     });
+
     setBlockedParsed(result);
     setConfirmed(true);
   };
 
   const isBlocked = (name, date) => {
-    const blocked = blockedParsed?.[name.toLowerCase()] || [];
-    return blocked.includes(date);
+    return blockedParsed?.[name.toLowerCase()]?.includes(date) || false;
   };
 
-  const assignDuty = (dateStr, type, assignedMap) => {
+  const assignDuty = (dateStr, type, assignments) => {
     const eligible = csvData.filter(p => {
       if (p.assigned >= MAX_DUTY_POINTS && (type === 'AM' || type === 'PM')) return false;
       if (isBlocked(p.name, dateStr)) return false;
@@ -80,13 +85,13 @@ const App = () => {
     eligible.sort((a, b) => a.points + a.assigned - (b.points + b.assigned));
     const selected = eligible[0];
     if (!selected) return '';
-    selected.assigned += (type === 'AM' || type === 'PM') ? 1 : 0;
+    if (type === 'AM' || type === 'PM') selected.assigned += 1;
     selected.schedule.push(dateStr);
-    assignedMap[dateStr] = assignedMap[dateStr] || { AM: '', PM: '', AMR: [], PMR: [] };
-    if (type === 'AM') assignedMap[dateStr].AM = selected.name;
-    if (type === 'PM') assignedMap[dateStr].PM = selected.name;
-    if (type === 'AMR') assignedMap[dateStr].AMR.push(selected.name);
-    if (type === 'PMR') assignedMap[dateStr].PMR.push(selected.name);
+    assignments[dateStr] = assignments[dateStr] || { AM: '', PM: '', AMR: [], PMR: [] };
+    if (type === 'AM') assignments[dateStr].AM = selected.name;
+    if (type === 'PM') assignments[dateStr].PM = selected.name;
+    if (type === 'AMR') assignments[dateStr].AMR.push(selected.name);
+    if (type === 'PMR') assignments[dateStr].PMR.push(selected.name);
     return selected.name;
   };
 
@@ -94,8 +99,9 @@ const App = () => {
     const [year, month] = monthYear.split('-');
     const daysInMonth = new Date(year, month, 0).getDate();
     const assignments = {};
-    for (let i = 1; i <= daysInMonth; i++) {
-      const dateObj = new Date(year, month - 1, i);
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateObj = new Date(year, month - 1, d);
       const dateStr = format(dateObj, 'yyyy-MM-dd');
       assignDuty(dateStr, 'AM', assignments);
       assignDuty(dateStr, 'PM', assignments);
@@ -106,19 +112,19 @@ const App = () => {
     }
 
     const rows = [];
-    for (let i = 1; i <= daysInMonth; i++) {
-      const dateObj = new Date(year, month - 1, i);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateObj = new Date(year, month - 1, d);
       const dateStr = format(dateObj, 'yyyy-MM-dd');
-      const a = assignments[dateStr] || { AM: '', PM: '', AMR: [], PMR: [] };
+      const dayRow = assignments[dateStr] || { AM: '', PM: '', AMR: [], PMR: [] };
       rows.push({
         Date: format(dateObj, 'd/M/yyyy'),
         Day: format(dateObj, 'EEE'),
-        AM: a.AM,
-        PM: a.PM,
-        'AM Reserve 1': a.AMR[0] || '',
-        'AM Reserve 2': a.AMR[1] || '',
-        'PM Reserve 1': a.PMR[0] || '',
-        'PM Reserve 2': a.PMR[1] || ''
+        AM: dayRow.AM,
+        PM: dayRow.PM,
+        'AM Reserve 1': dayRow.AMR[0] || '',
+        'AM Reserve 2': dayRow.AMR[1] || '',
+        'PM Reserve 1': dayRow.PMR[0] || '',
+        'PM Reserve 2': dayRow.PMR[1] || ''
       });
     }
 
@@ -134,68 +140,64 @@ const App = () => {
   };
 
   return (
-    <div style={{ padding: '2em', maxWidth: '600px', margin: 'auto', fontFamily: 'Arial, sans-serif' }}>
-      <h1 style={{ fontSize: '1.5em', fontWeight: 'bold', marginBottom: '1em' }}>Duty Scheduler</h1>
+    <div style={{ padding: '2em', maxWidth: '700px', margin: 'auto', fontFamily: 'Arial, sans-serif' }}>
+      <h1 style={{ fontSize: '1.8em', fontWeight: 'bold', marginBottom: '1em' }}>Duty Scheduler</h1>
 
-      <label><strong>Paste Current Points:</strong></label>
+      <label><strong>Paste Current Points (Name,Points):</strong></label>
       <textarea
         rows={10}
-        value={rawPoints}
-        onChange={(e) => setRawPoints(e.target.value)}
-        style={{ width: '100%', padding: '8px', marginBottom: '1em' }}
-        placeholder={`Name,Points\nAsher,1\nBenjamin,7.5\n...`}
+        value={rawInput}
+        onChange={(e) => setRawInput(e.target.value)}
+        style={{ width: '100%', padding: '10px', marginBottom: '1em', fontFamily: 'monospace' }}
+        placeholder={`asher,1\nBenjamin,7.5\n...`}
       />
-
-      <button onClick={parsePoints} style={{ marginBottom: '2em', padding: '10px', backgroundColor: '#007bff', color: 'white', border: 'none' }}>
-        Confirm Points
+      <button onClick={parsePointsText} style={{ marginBottom: '1.5em', padding: '10px', backgroundColor: '#444', color: 'white' }}>
+        Parse Points
       </button>
 
-      {csvData && (
-        <>
-          <label><strong>Blocked-Out Dates (Optional):</strong></label>
-          <textarea
-            rows={6}
-            value={blockedText}
-            onChange={(e) => setBlockedText(e.target.value)}
-            style={{ width: '100%', padding: '8px', marginBottom: '1em' }}
-            placeholder={`e.g.\nDong Han: 3, 6, 20–22 Aug\nHarshith: 4–9 Aug\nDervin: 02/08/25–10/08/25`}
-          />
+      <label><strong>Blocked-Out Dates (Optional):</strong></label>
+      <textarea
+        rows={5}
+        value={blockedText}
+        onChange={(e) => setBlockedText(e.target.value)}
+        style={{ width: '100%', padding: '10px', marginBottom: '1em' }}
+        placeholder={`dong han: 3, 6, 20–22 Aug\nharshith: 4–9\ndervin: 2–10`}
+      />
 
-          <label><strong>Target Month:</strong></label>
-          <input
-            type="month"
-            value={monthYear}
-            onChange={(e) => setMonthYear(e.target.value)}
-            style={{ marginBottom: '1em', display: 'block' }}
-          />
+      <label><strong>Target Month:</strong></label>
+      <input
+        type="month"
+        value={monthYear}
+        onChange={(e) => setMonthYear(e.target.value)}
+        style={{ marginBottom: '1em', display: 'block' }}
+      />
 
-          {!confirmed && (
-            <button onClick={parseBlockedDates} style={{ padding: '10px', backgroundColor: '#007bff', color: 'white', border: 'none' }}>
-              Confirm Blocked Dates
-            </button>
-          )}
+      {!confirmed && (
+        <button onClick={parseBlockedDates} style={{ padding: '10px', backgroundColor: '#007bff', color: 'white', border: 'none' }}>
+          Confirm Blocked Dates
+        </button>
+      )}
 
-          {confirmed && (
-            <div style={{ marginTop: '2em' }}>
-              <h2><strong>Parsed Blocked-Out Dates:</strong></h2>
-              <ul>
-                {Object.entries(blockedParsed || {}).map(([name, dates]) => (
-                  <li key={name}><strong>{name}</strong>: {dates.map(d => format(new Date(d), 'd MMM')).join(', ')}</li>
-                ))}
-              </ul>
-              <br />
-              <button onClick={generateSchedule} style={{ padding: '10px', backgroundColor: 'green', color: 'white', border: 'none', marginRight: '1em' }}>
-                Yes, Generate Schedule
-              </button>
-              <button onClick={() => setConfirmed(false)} style={{ padding: '10px', border: '1px solid #ccc' }}>
-                Go Back to Edit
-              </button>
-            </div>
-          )}
-        </>
+      {confirmed && (
+        <div style={{ marginTop: '2em' }}>
+          <h2><strong>Parsed Blocked Dates:</strong></h2>
+          <ul>
+            {Object.entries(blockedParsed || {}).map(([name, dates]) => (
+              <li key={name}><strong>{name}</strong>: {dates.map(d => format(new Date(d), 'd MMM')).join(', ')}</li>
+            ))}
+          </ul>
+          <br />
+          <button onClick={generateSchedule} style={{ padding: '10px', backgroundColor: 'green', color: 'white', border: 'none', marginRight: '1em' }}>
+            Generate Schedule
+          </button>
+          <button onClick={() => setConfirmed(false)} style={{ padding: '10px', border: '1px solid #ccc' }}>
+            Edit Again
+          </button>
+        </div>
       )}
     </div>
   );
 };
 
 export default App;
+
