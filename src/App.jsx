@@ -19,11 +19,15 @@ const App = () => {
         const res = await fetch('https://script.google.com/macros/s/AKfycbxsJBDqmsxPSxAnaZHtE_n-ddHHRFjP9IKgtp-T1i-JhxvnlEcB00yQPa_oHihh6UbUrw/exec');
         const data = await res.json();
         if (Array.isArray(data)) {
-          const parsed = data
-            .filter(row => row.name && !isNaN(parseFloat(row.points)))
-            .map(row => ({
-  name: row.name.trim(),
-  points: parseFloat(row.points),
+        const parsed = data
+  .filter(row => row.name && !isNaN(parseFloat(row.points)))
+  .map(row => ({
+    name: row.name.trim(),
+    points: parseFloat(row.points),
+    assigned: 0,
+    schedule: []
+  }));
+
 
               assigned: 0,
               schedule: []
