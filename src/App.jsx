@@ -147,13 +147,14 @@ const App = () => {
       <h1>Duty Scheduler</h1>
 
       <label><b>Clerk Points:</b></label>
-      <textarea
-        rows={6}
-        value={clerkPreview}
-        readOnly
-        style={{ width: '100%', marginBottom: '1em', backgroundColor: '#f4f4f4', padding: '10px' }}
-        placeholder="Click 'Recall Clerk Data' to load..."
-      />
+   <textarea
+  rows={6}
+  value={fetchedPoints.map(p => `${p.name}: ${p.points}`).join('\n')}
+  readOnly
+  style={{ width: '100%', marginBottom: '1em', backgroundColor: '#f4f4f4', padding: '10px' }}
+  placeholder="Click 'Recall Clerk Data' to load..."
+/>
+
 
       <button onClick={handleRecallPoints} style={{ padding: '10px', backgroundColor: '#007bff', color: 'white', border: 'none', marginBottom: '1em' }}>
         Recall Clerk Data
