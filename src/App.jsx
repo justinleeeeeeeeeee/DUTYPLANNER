@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { format, getDay, parseISO } from 'date-fns';
+import { format, getDay, parseISO, getISOWeek, subDays, addDays } from 'date-fns';
 import Papa from 'papaparse';
 
 const MAX_LOWPOINT_CLERK = 8;
@@ -27,7 +27,9 @@ const App = () => {
               points: parseFloat(row.points),
               assigned: 0,
               assignedDates: [],
-              dutyPointsThisMonth: 0
+              dutyPointsThisMonth: 0,
+              reserveByWeek: {},
+              reserveDates: []
             }));
           setFetchedPoints(parsed);
           setCsvData(parsed);
@@ -96,7 +98,10 @@ const App = () => {
   };
 
   const assignDuty = (dateStr, type, assignedMap) => {
-    const eligible = csvData.filter(p => {
+    const weekNum = getISOWeek(parseISO(dateStr));
+    let reserveLimit = 2;
+
+    const getEligible = (limit) => csvData.filter(p => {
       const isHigh = p.points >= HIGH_POINT_THRESHOLD;
       const maxCap = isHigh ? MAX_HIGHPOINT_CLERK : MAX_LOWPOINT_CLERK;
       const dutyPointValue = calculateDutyPoints(dateStr, type);
@@ -104,9 +109,25 @@ const App = () => {
       if (isBlocked(p.name, dateStr)) return false;
       if (p.assignedDates.includes(dateStr)) return false;
       if (hasBackToBack(p, dateStr)) return false;
-      if (p.dutyPointsThisMonth + dutyPointValue > maxCap) return false;
+      if (p.dutyPointsThisMonth + dutyPointValue > maxCap && (type === 'AM' || type === 'PM')) return false;
+
+      if (type === 'AMR' || type === 'PMR') {
+        const reserveCount = p.reserveByWeek[weekNum] || 0;
+        if (reserveCount >= limit) return false;
+        const date = parseISO(dateStr);
+        const before = format(subDays(date, 1), 'yyyy-MM-dd');
+        const after = format(addDays(date, 1), 'yyyy-MM-dd');
+        if (p.assignedDates.includes(before) || p.assignedDates.includes(after)) return false;
+      }
+
       return true;
     });
+
+    let eligible = getEligible(reserveLimit);
+    while ((type === 'AMR' || type === 'PMR') && eligible.length < 2 && reserveLimit < 7) {
+      reserveLimit++;
+      eligible = getEligible(reserveLimit);
+    }
 
     eligible.sort((a, b) => (a.points + a.dutyPointsThisMonth) - (b.points + b.dutyPointsThisMonth));
 
@@ -117,6 +138,11 @@ const App = () => {
     selected.assignedDates.push(dateStr);
     selected.dutyPointsThisMonth += dutyPointValue;
     selected.assigned += type === 'AM' || type === 'PM' ? 1 : 0;
+
+    if (type === 'AMR' || type === 'PMR') {
+      selected.reserveByWeek[weekNum] = (selected.reserveByWeek[weekNum] || 0) + 1;
+      selected.reserveDates.push(dateStr);
+    }
 
     assignedMap[dateStr] = assignedMap[dateStr] || { AM: '', PM: '', AMR: [], PMR: [] };
     if (type === 'AM') assignedMap[dateStr].AM = selected.name;
