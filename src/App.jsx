@@ -1,41 +1,43 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import Papa from 'papaparse';
 
 const MAX_DUTY_POINTS = 7;
 
 const App = () => {
-  const [csvData, setCsvData] = useState(null);
+  const [csvData, setCsvData] = useState([]);
   const [fetchedPoints, setFetchedPoints] = useState([]);
-  const [clerkPreview, setClerkPreview] = useState('');
   const [blockedText, setBlockedText] = useState('');
   const [blockedParsed, setBlockedParsed] = useState(null);
   const [confirmed, setConfirmed] = useState(false);
   const [monthYear, setMonthYear] = useState('2025-08');
 
-  const handleRecallPoints = async () => {
-    try {
-      const res = await fetch('https://script.google.com/macros/s/AKfycbxsJBDqmsxPSxAnaZHtE_n-ddHHRFjP9IKgtp-T1i-JhxvnlEcB00yQPa_oHihh6UbUrw/exec');
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        const parsed = data
-          .filter(row => row.Name && !isNaN(parseFloat(row.Points)))
-          .map(row => ({
-            name: row.Name.trim(),
-            points: parseFloat(row.Points),
-            assigned: 0,
-            schedule: []
-          }));
-        setFetchedPoints(parsed);
-        setCsvData(parsed);
-        const preview = parsed.map(p => `${p.name}: ${p.points}`).join('\n');
-        setClerkPreview(preview);
+  // Auto-load clerk points from Google Sheet
+  useEffect(() => {
+    const fetchClerkPoints = async () => {
+      try {
+        const res = await fetch('https://script.google.com/macros/s/AKfycbxsJBDqmsxPSxAnaZHtE_n-ddHHRFjP9IKgtp-T1i-JhxvnlEcB00yQPa_oHihh6UbUrw/exec');
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          const parsed = data
+            .filter(row => row.Name && !isNaN(parseFloat(row.Points)))
+            .map(row => ({
+              name: row.Name.trim(),
+              points: parseFloat(row.Points),
+              assigned: 0,
+              schedule: []
+            }));
+          setFetchedPoints(parsed);
+          setCsvData(parsed);
+        }
+      } catch (error) {
+        alert("Failed to load clerk points from Google Sheet.");
+        console.error(error);
       }
-    } catch (error) {
-      alert("Failed to load data. Check internet or script access.");
-      console.error(error);
-    }
-  };
+    };
+
+    fetchClerkPoints();
+  }, []);
 
   const parseBlockedDates = () => {
     const result = {};
@@ -146,19 +148,14 @@ const App = () => {
     <div style={{ padding: '2em', maxWidth: '700px', margin: 'auto', fontFamily: 'Arial, sans-serif' }}>
       <h1>Duty Scheduler</h1>
 
-      <label><b>Clerk Points:</b></label>
-   <textarea
-  rows={6}
-  value={fetchedPoints.map(p => `${p.name}: ${p.points}`).join('\n')}
-  readOnly
-  style={{ width: '100%', marginBottom: '1em', backgroundColor: '#f4f4f4', padding: '10px' }}
-  placeholder="Click 'Recall Clerk Data' to load..."
-/>
-
-
-      <button onClick={handleRecallPoints} style={{ padding: '10px', backgroundColor: '#007bff', color: 'white', border: 'none', marginBottom: '1em' }}>
-        Recall Clerk Data
-      </button>
+      <label><b>Clerk Points (auto-loaded):</b></label>
+      <textarea
+        rows={6}
+        value={fetchedPoints.map(p => `${p.name}: ${p.points}`).join('\n')}
+        readOnly
+        style={{ width: '100%', marginBottom: '1em', backgroundColor: '#f4f4f4', padding: '10px' }}
+        placeholder="Loading clerk points..."
+      />
 
       <label><strong>Blocked-Out Dates (Optional):</strong></label>
       <textarea
