@@ -1,8 +1,5 @@
-// duty-scheduler-app
-// React + Tailwind + CSV download version with auto assignment logic and Google Sheet fetch
-
 import React, { useState } from 'react';
-import { format, parse } from 'date-fns';
+import { format } from 'date-fns';
 import Papa from 'papaparse';
 
 const MAX_DUTY_POINTS = 7;
@@ -10,27 +7,11 @@ const MAX_DUTY_POINTS = 7;
 const App = () => {
   const [csvData, setCsvData] = useState(null);
   const [fetchedPoints, setFetchedPoints] = useState([]);
-  const [pointsConfirmed, setPointsConfirmed] = useState(false);
+  const [clerkPreview, setClerkPreview] = useState('');
   const [blockedText, setBlockedText] = useState('');
   const [blockedParsed, setBlockedParsed] = useState(null);
   const [confirmed, setConfirmed] = useState(false);
   const [monthYear, setMonthYear] = useState('2025-08');
-
-  const handleCsvUpload = (e) => {
-    Papa.parse(e.target.files[0], {
-      header: true,
-      complete: (results) => {
-        const parsed = results.data.filter(row => row.Name && !isNaN(parseFloat(row.Points)));
-        setCsvData(parsed.map(row => ({
-          name: row.Name.trim(),
-          points: parseFloat(row.Points),
-          assigned: 0,
-          schedule: []
-        })));
-        setPointsConfirmed(true);
-      }
-    });
-  };
 
   const handleRecallPoints = async () => {
     try {
@@ -47,7 +28,8 @@ const App = () => {
           }));
         setFetchedPoints(parsed);
         setCsvData(parsed);
-        setPointsConfirmed(false);
+        const preview = parsed.map(p => `${p.name}: ${p.points}`).join('\n');
+        setClerkPreview(preview);
       }
     } catch (error) {
       alert("Failed to load data. Check internet or script access.");
@@ -58,12 +40,14 @@ const App = () => {
   const parseBlockedDates = () => {
     const result = {};
     const lines = blockedText.split(/\n|\r/).filter(Boolean);
+    const [year, month] = monthYear.split('-');
+
     lines.forEach(line => {
       const [name, dates] = line.split(':').map(part => part.trim());
       if (!name || !dates) return;
       const parts = dates.split(',').map(d => d.trim());
       const expanded = [];
-      const [year, month] = monthYear.split('-');
+
       parts.forEach(part => {
         const rangeMatch = part.match(/(\d{1,2})\s*[-–—]\s*(\d{1,2})/);
         if (rangeMatch) {
@@ -78,8 +62,10 @@ const App = () => {
           expanded.push(format(d, 'yyyy-MM-dd'));
         }
       });
+
       result[name.toLowerCase()] = expanded;
     });
+
     setBlockedParsed(result);
     setConfirmed(true);
   };
@@ -96,16 +82,19 @@ const App = () => {
       if (p.schedule.includes(dateStr)) return false;
       return true;
     });
+
     eligible.sort((a, b) => a.points + a.assigned - (b.points + b.assigned));
     const selected = eligible[0];
     if (!selected) return '';
     selected.assigned += (type === 'AM' || type === 'PM') ? 1 : 0;
     selected.schedule.push(dateStr);
     assignedMap[dateStr] = assignedMap[dateStr] || { AM: '', PM: '', AMR: [], PMR: [] };
+
     if (type === 'AM') assignedMap[dateStr].AM = selected.name;
     if (type === 'PM') assignedMap[dateStr].PM = selected.name;
     if (type === 'AMR') assignedMap[dateStr].AMR.push(selected.name);
     if (type === 'PMR') assignedMap[dateStr].PMR.push(selected.name);
+
     return selected.name;
   };
 
@@ -113,6 +102,7 @@ const App = () => {
     const [year, month] = monthYear.split('-');
     const daysInMonth = new Date(year, month, 0).getDate();
     const assignments = {};
+
     for (let i = 1; i <= daysInMonth; i++) {
       const dateObj = new Date(year, month - 1, i);
       const dateStr = format(dateObj, 'yyyy-MM-dd');
@@ -154,30 +144,20 @@ const App = () => {
 
   return (
     <div style={{ padding: '2em', maxWidth: '700px', margin: 'auto', fontFamily: 'Arial, sans-serif' }}>
-      <h1 style={{ fontSize: '1.5em', fontWeight: 'bold', marginBottom: '1em' }}>Duty Scheduler</h1>
+      <h1>Duty Scheduler</h1>
 
-      <button onClick={handleRecallPoints} style={{ padding: '10px', backgroundColor: '#007bff', color: 'white', border: 'none', marginRight: '1em' }}>
-        Recall Current Duty Clerk Points
+      <label><b>Clerk Points:</b></label>
+      <textarea
+        rows={6}
+        value={clerkPreview}
+        readOnly
+        style={{ width: '100%', marginBottom: '1em', backgroundColor: '#f4f4f4', padding: '10px' }}
+        placeholder="Click 'Recall Clerk Data' to load..."
+      />
+
+      <button onClick={handleRecallPoints} style={{ padding: '10px', backgroundColor: '#007bff', color: 'white', border: 'none', marginBottom: '1em' }}>
+        Recall Clerk Data
       </button>
-
-      {fetchedPoints.length > 0 && !pointsConfirmed && (
-        <div style={{ marginBottom: '1em' }}>
-          <h3>Fetched Clerk Points:</h3>
-          <table border="1" cellPadding="5">
-            <thead>
-              <tr><th>Name</th><th>Points</th></tr>
-            </thead>
-            <tbody>
-              {fetchedPoints.map((p, i) => (
-                <tr key={i}><td>{p.name}</td><td>{p.points}</td></tr>
-              ))}
-            </tbody>
-          </table>
-          <button onClick={() => setPointsConfirmed(true)} style={{ marginTop: '10px', padding: '8px', background: 'green', color: 'white' }}>
-            Yes, Use These Points
-          </button>
-        </div>
-      )}
 
       <label><strong>Blocked-Out Dates (Optional):</strong></label>
       <textarea
@@ -196,31 +176,37 @@ const App = () => {
         style={{ marginBottom: '1em', display: 'block' }}
       />
 
-      {!confirmed && pointsConfirmed && (
-        <button onClick={parseBlockedDates} style={{ padding: '10px', backgroundColor: '#007bff', color: 'white', border: 'none' }}>
-          Confirm Blocked Dates
-        </button>
-      )}
+      <button onClick={parseBlockedDates} style={{ padding: '10px', backgroundColor: 'orange', color: 'white', border: 'none', marginBottom: '1em' }}>
+        Parse Blocked-Out Dates
+      </button>
 
-      {confirmed && (
-        <div style={{ marginTop: '2em' }}>
-          <h2><strong>Parsed Blocked-Out Dates:</strong></h2>
+      {blockedParsed && (
+        <div>
+          <h3>Parsed Blocked-Out Dates:</h3>
           <ul>
-            {Object.entries(blockedParsed || {}).map(([name, dates]) => (
-              <li key={name}><strong>{name}</strong>: {dates.map(d => format(new Date(d), 'd MMM')).join(', ')}</li>
+            {Object.entries(blockedParsed).map(([name, dates]) => (
+              <li key={name}><b>{name}</b>: {dates.map(d => format(new Date(d), 'd MMM')).join(', ')}</li>
             ))}
           </ul>
-          <br />
-          <button onClick={generateSchedule} style={{ padding: '10px', backgroundColor: 'green', color: 'white', border: 'none', marginRight: '1em' }}>
-            Yes, Generate Schedule
-          </button>
-          <button onClick={() => setConfirmed(false)} style={{ padding: '10px', border: '1px solid #ccc' }}>
-            Go Back to Edit
-          </button>
         </div>
       )}
+
+      <button
+        onClick={generateSchedule}
+        disabled={!csvData || !blockedParsed}
+        style={{
+          padding: '10px',
+          backgroundColor: !csvData || !blockedParsed ? '#ccc' : 'green',
+          color: 'white',
+          border: 'none',
+          marginTop: '1em'
+        }}
+      >
+        Generate Schedule
+      </button>
     </div>
   );
 };
 
 export default App;
+
