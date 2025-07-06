@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { format } from 'date-fns';
+import { format, getDay, parseISO } from 'date-fns';
 import Papa from 'papaparse';
 
-const MAX_DUTY_POINTS = 7;
+const MAX_LOWPOINT_CLERK = 8;
+const MAX_HIGHPOINT_CLERK = 2;
+const HIGH_POINT_THRESHOLD = 14;
 
 const App = () => {
   const [csvData, setCsvData] = useState([]);
@@ -12,25 +14,20 @@ const App = () => {
   const [confirmed, setConfirmed] = useState(false);
   const [monthYear, setMonthYear] = useState('2025-08');
 
-  // Auto-load clerk points from Google Sheet
   useEffect(() => {
     const fetchClerkPoints = async () => {
       try {
         const res = await fetch('https://script.google.com/macros/s/AKfycbxsJBDqmsxPSxAnaZHtE_n-ddHHRFjP9IKgtp-T1i-JhxvnlEcB00yQPa_oHihh6UbUrw/exec');
         const data = await res.json();
         if (Array.isArray(data)) {
-        const parsed = data
-  .filter(row => row.name && !isNaN(parseFloat(row.points)))
-  .map(row => ({
-    name: row.name.trim(),
-    points: parseFloat(row.points),
-    assigned: 0,
-    schedule: []
-  }));
-
-
+          const parsed = data
+            .filter(row => row.name && !isNaN(parseFloat(row.points)))
+            .map(row => ({
+              name: row.name.trim(),
+              points: parseFloat(row.points),
               assigned: 0,
-              schedule: []
+              assignedDates: [],
+              dutyPointsThisMonth: 0
             }));
           setFetchedPoints(parsed);
           setCsvData(parsed);
@@ -40,7 +37,6 @@ const App = () => {
         console.error(error);
       }
     };
-
     fetchClerkPoints();
   }, []);
 
@@ -56,17 +52,15 @@ const App = () => {
       const expanded = [];
 
       parts.forEach(part => {
-        const rangeMatch = part.match(/(\d{1,2})\s*[-–—]\s*(\d{1,2})/);
+        const rangeMatch = part.match(/(\d{1,2})\s*[-\u2013\u2014]\s*(\d{1,2})/);
         if (rangeMatch) {
           const start = parseInt(rangeMatch[1]);
           const end = parseInt(rangeMatch[2]);
           for (let i = start; i <= end; i++) {
-            const d = new Date(+year, +month - 1, i);
-            expanded.push(format(d, 'yyyy-MM-dd'));
+            expanded.push(format(new Date(+year, +month - 1, i), 'yyyy-MM-dd'));
           }
         } else if (/^\d{1,2}$/.test(part)) {
-          const d = new Date(+year, +month - 1, parseInt(part));
-          expanded.push(format(d, 'yyyy-MM-dd'));
+          expanded.push(format(new Date(+year, +month - 1, parseInt(part)), 'yyyy-MM-dd'));
         }
       });
 
@@ -82,21 +76,49 @@ const App = () => {
     return blocked.includes(date);
   };
 
+  const calculateDutyPoints = (dateStr, type) => {
+    const date = parseISO(dateStr);
+    const day = getDay(date);
+    if (type === 'AM' || type === 'PM') {
+      if (day === 5 && type === 'PM') return 1.5; // Friday PM
+      if (day === 0 || day === 6) return 2; // Weekend
+      return 1; // Weekday
+    }
+    return 0; // Reserve
+  };
+
+  const hasBackToBack = (clerk, dateStr) => {
+    const date = parseISO(dateStr);
+    return clerk.assignedDates.some(d => {
+      const diff = Math.abs((parseISO(d) - date) / (1000 * 60 * 60 * 24));
+      return diff === 1;
+    });
+  };
+
   const assignDuty = (dateStr, type, assignedMap) => {
     const eligible = csvData.filter(p => {
-      if (p.assigned >= MAX_DUTY_POINTS && (type === 'AM' || type === 'PM')) return false;
+      const isHigh = p.points >= HIGH_POINT_THRESHOLD;
+      const maxCap = isHigh ? MAX_HIGHPOINT_CLERK : MAX_LOWPOINT_CLERK;
+      const dutyPointValue = calculateDutyPoints(dateStr, type);
+
       if (isBlocked(p.name, dateStr)) return false;
-      if (p.schedule.includes(dateStr)) return false;
+      if (p.assignedDates.includes(dateStr)) return false;
+      if (hasBackToBack(p, dateStr)) return false;
+      if (p.dutyPointsThisMonth + dutyPointValue > maxCap) return false;
       return true;
     });
 
-    eligible.sort((a, b) => a.points + a.assigned - (b.points + b.assigned));
+    eligible.sort((a, b) => (a.points + a.dutyPointsThisMonth) - (b.points + b.dutyPointsThisMonth));
+
     const selected = eligible[0];
     if (!selected) return '';
-    selected.assigned += (type === 'AM' || type === 'PM') ? 1 : 0;
-    selected.schedule.push(dateStr);
-    assignedMap[dateStr] = assignedMap[dateStr] || { AM: '', PM: '', AMR: [], PMR: [] };
 
+    const dutyPointValue = calculateDutyPoints(dateStr, type);
+    selected.assignedDates.push(dateStr);
+    selected.dutyPointsThisMonth += dutyPointValue;
+    selected.assigned += type === 'AM' || type === 'PM' ? 1 : 0;
+
+    assignedMap[dateStr] = assignedMap[dateStr] || { AM: '', PM: '', AMR: [], PMR: [] };
     if (type === 'AM') assignedMap[dateStr].AM = selected.name;
     if (type === 'PM') assignedMap[dateStr].PM = selected.name;
     if (type === 'AMR') assignedMap[dateStr].AMR.push(selected.name);
