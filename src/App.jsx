@@ -20,10 +20,11 @@ const App = () => {
         const data = await res.json();
         if (Array.isArray(data)) {
           const parsed = data
-            .filter(row => row.Name && !isNaN(parseFloat(row.Points)))
+            .filter(row => row.name && !isNaN(parseFloat(row.points)))
             .map(row => ({
-              name: row.Name.trim(),
-              points: parseFloat(row.Points),
+  name: row.name.trim(),
+  points: parseFloat(row.points),
+
               assigned: 0,
               schedule: []
             }));
